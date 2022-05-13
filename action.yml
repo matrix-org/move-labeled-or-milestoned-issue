@@ -1,7 +1,7 @@
 name: 'Move labeled or milestoned issue to a specific project column'
 description: 'Move an newly created issue or existing issue that has been labeled or milestoned to a specific column in a project'
 branding:
-  icon: 'move'  
+  icon: 'move'
   color: 'yellow'
 inputs:
   action-token:
@@ -21,6 +21,9 @@ inputs:
     required: false
   columns-to-ignore:
     description: 'Comma separated list of columns to ignore. If a card/issue is already in one of these columns, it will not be moved. Use `*` to ignore all columns'
+    required: false
+  archive-behaviour:
+    description: 'One of `error`, `ignore`, or `restore` to determine what happens to archived cards: an error (default), nothing, or un-archiving. This is optional.'
     required: false
 runs:
   using: 'node12'

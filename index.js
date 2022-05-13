@@ -9,6 +9,7 @@ async function run() {
     const labelName = core.getInput("label-name");
     const milestoneName = core.getInput("milestone-name");
     const ignoreList = core.getInput("columns-to-ignore");
+    const archiveAction = core.getInput("archive-behaviour") || "error";
     const octokit = new github.GitHub(myToken);
     const context = github.context;
 
@@ -17,6 +18,11 @@ async function run() {
     }
     else if (milestoneName && labelName){
         throw new Error("label-name and milestone-name cannot both be set");
+    }
+
+    const validArchiveActions = ["error", "restore", "ignore"];
+    if(!validArchiveActions.includes(archiveAction)){
+        throw new Error("archive action must be one of: " + JSON.stringify(validArchiveActions));
     }
 
     var found = false;
@@ -51,6 +57,7 @@ async function run() {
         var columnId = info[0];
         var cardId = info[1];
         var currentColumn = info[2];
+        var isArchived = info[3];
         console.log(`columnId is: ${columnId}, cardId is: ${cardId}, currentColumn is: ${currentColumn}`);
 
         var skip = [];
@@ -58,13 +65,23 @@ async function run() {
         if (ignoreList){
             skip = ignoreList.split(",");
         }
-        
+
         if (cardId != null && (ignoreList == "*" || skip.includes(currentColumn))){
             // card is present in a column that we want to ignore, don't move or do anything
             return `Card exists for issue in column ${currentColumn}. Column specified to be ignored, not moving issue.`;
         }
         else if (cardId != null){
             // card already exists for the issue
+
+            // check archive state
+            if(isArchived){
+                if(archiveAction === "ignore") return `Ignoring archived card for #${baseObject.id}`;
+                else if(archiveAction === "error") throw new Error(`Card for #${baseObject.id} is archived`);
+                else if(archiveAction === "restore") {
+                    await restoreExistingCard(octokit, cardId);
+                }
+            }
+
             // move card to the appropriate column
             return await moveExistingCard(octokit, columnId, cardId);
         } else {
@@ -98,6 +115,15 @@ async function moveExistingCard(octokit, columnId, cardId){
     return `Succesfully moved card #${cardId} to column #${columnId} !`;
 }
 
+async function restoreExistingCard(octokit, cardId){
+    console.log(`A card exists and is archived. Attempting to restore #${cardId}`);
+    await octokit.projects.updateCard({
+        card_id: cardId,
+        archived: false,
+    });
+    console.log(`Successfully restored #${cardId} !`);
+}
+
 async function tryGetColumnAndCardInformation(columnName, projectUrl, token, issueOrPrDatabaseId){
     // if org project, we need to extract the org name
     // if repo project, need repo owner and name
@@ -106,6 +132,7 @@ async function tryGetColumnAndCardInformation(columnName, projectUrl, token, iss
     var currentColumnName = null;
     var splitUrl = projectUrl.split("/");
     var projectNumber = parseInt(splitUrl[6], 10);
+    var isArchived = false;
 
     // check if repo or org project
     if(splitUrl[3] == "orgs"){
@@ -126,6 +153,7 @@ async function tryGetColumnAndCardInformation(columnName, projectUrl, token, iss
                     if(card.node.content.databaseId == issueOrPrDatabaseId){
                         cardId = card.node.databaseId;
                         currentColumnName = columnNode.name;
+                        isArchived = columnNode.isArchived;
                     }
                 }
             });
@@ -149,12 +177,13 @@ async function tryGetColumnAndCardInformation(columnName, projectUrl, token, iss
                     if(card.node.content.databaseId == issueOrPrDatabaseId){
                         cardId = card.node.databaseId;
                         currentColumnName = columnNode.name;
+                        isArchived = columnNode.isArchived;
                     }
                 }
             });
         });
     }
-    return [columnId, cardId, currentColumnName];
+    return [columnId, cardId, currentColumnName, isArchived];
 }
 
 async function getOrgInformation(organizationLogin, projectNumber, token){
@@ -176,6 +205,7 @@ async function getOrgInformation(organizationLogin, projectNumber, token){
                                 edges {
                                     node {
                                         databaseId
+                                        isArchived
                                             content {
                                                 ... on Issue {
                                                     databaseId
@@ -223,6 +253,7 @@ async function getRepoInformation(repositoryOwner, repositoryName, projectNumber
                                 edges {
                                     node {
                                         databaseId
+                                        isArchived
                                             content {
                                                 ... on Issue {
                                                     databaseId
@@ -239,7 +270,7 @@ async function getRepoInformation(repositoryOwner, repositoryName, projectNumber
                             }
                         }
                     }
-                }        
+                }
             }`, {
             ownerVariable: repositoryOwner,
             nameVariable: repositoryName,
@@ -254,8 +285,8 @@ async function getRepoInformation(repositoryOwner, repositoryName, projectNumber
 run()
     .then(
         (response) => { console.log(`Finished running: ${response}`); },
-        (error) => { 
+        (error) => {
             console.log(`#ERROR# ${error}`);
-            process.exit(1); 
+            process.exit(1);
         }
     );
